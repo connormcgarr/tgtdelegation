@@ -120,7 +120,7 @@ doIFAjCCBP6gAwIBBaEDAgEWooIECzCCBAdhggQDMIID/6ADAgEFoQ4bDE1BUlZFTC5MT0NBTKIhMB+g
 ```
 
 ## A Word On ASN1
-Please note that `tgtdelegation`, since Beacon Object Files cannot link to external libs like the ASN1 libs, will essentially perform "trial-by-error" to determine the encryption type. First AES265 is used. In my experiences, 99.9% of the time I have seen this to be the encryption type in use. If this fails, AES128 is tried. If this fails RC4 is used. Instead of being able to parse the AP-REQ blob to determine the encryption size, we do "trial-by-error" to identify the encryption type.
+Please note that `tgtdelegation`, since Beacon Object Files cannot link to external libs like the ASN1 libs, will essentially perform "trial-by-error" to determine the encryption type. First AES256 is used. In my experiences, 99.9% of the time I have seen this to be the encryption type in use. If this fails, AES128 is tried. If this fails RC4 is used. Instead of being able to parse the AP-REQ blob to determine the encryption size, we do "trial-by-error" to identify the encryption type.
 
 This is also why there is a need to pass the AP-REQ blob and Kerberos session key to the "custom" Impacket scripts, as `tgtdelegation` cannot use the same libraries as Kekeo and/or Rubeus to decrypt/parse the Kerberos blobs/structures. This is all automated via Aggressor in Cobalt Strike
 
