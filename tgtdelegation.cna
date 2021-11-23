@@ -17,7 +17,7 @@ beacon_command_register(
 "tgtdelegation",
 "tgtdelegation: Obtain a usable Kerberos TGT",
 "\ntgtdelegation: Obtain a usable Kerberos TGT\n".
-"\nUsage: tgtdelegation [FQDN/currentdomain]\n".
+"\nUsage: tgtdelegation [FQDN/currentdomain SPN/default]\n".
 "\ntgtdelegation is Beacon Object File that is used to obtain a usable TGT for the current user. This data blob is passed to tgtParse.py/tgtParser.exe automatically, via tgtdelegation.cna, to be leveraged as a usable .ccache for lateral movement with Impacket and other supported tools over Kerberos. You may specify a domain or pull the current domain. Additionally, you may specify a SPN or use a default SPN for CIFS/PDC.DOMAIN.LOCAL. This SPN argument is available in case the default SPN is not configured for unconstrained delegation. Please see the tgtdelegation README.md more usage.\n".
 "\nExample usage 1: tgtdelegation currentdomain default\nExample usage 2: tgtdelegation DOMAIN.LOCAL CIFS/FILESERVER.MARVEL.LOCAL\n"
 );
