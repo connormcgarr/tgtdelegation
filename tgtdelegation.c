@@ -753,7 +753,7 @@ int forgeTGT(wchar_t* spn, unsigned int nonce)
 												// Create a new ProtocolStatus variable
 												NTSTATUS packageStatus2 = 0;
 
-												// Call LsaCallAuthenticationPackage with AES128
+												// Call LsaCallAuthenticationPackage with RC4_HMAC
 												NTSTATUS callauthPkg = SECUR32$LsaCallAuthenticationPackage(
 													lsaHandle,
 													authpackageId,
